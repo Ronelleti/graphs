@@ -260,6 +260,22 @@ def run_scheduled():
             filename="AbnormalBGFTerminations_RH.png",
         )
 
+        build_composite(
+            page, out_dir,
+            [("SBG", "HFIBCF01", "H.248", "IMSSBGActiveBGFCalls"),
+             ("SBG", "HFSBG01", "H.248", "IMSSBGActiveBGFCalls")],
+            time_range="Last 7 days",
+            filename="ActiveBGFCalls_HF.png",
+        )
+
+        build_composite(
+            page, out_dir,
+            [("SBG", "RHIBCF01", "H.248", "IMSSBGActiveBGFCalls"),
+             ("SBG", "RHSBG01", "H.248", "IMSSBGActiveBGFCalls")],
+            time_range="Last 7 days",
+            filename="ActiveBGFCalls_RH.png",
+        )
+
         browser.close()
 
     print(f"\nDone. Screenshots saved in {out_dir}/")
