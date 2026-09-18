@@ -131,10 +131,26 @@ def select_dropdown(page, panel_index: int, label_text: str, option_text: str):
     dropdown.evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
     time.sleep(0.5)
     menu = dropdown.locator("eui-base-v0-menu")
+
     option = menu.get_by_text(option_text, exact=True).first
     option.evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
     time.sleep(0.5)
+
     if label_text == "KPI":
+        # A default KPI can end up checked with a delay, arriving AFTER we
+        # click our target. So check a few times, after a short wait each
+        # time, and uncheck anything that isn't our target.
+        for _ in range(3):
+            time.sleep(0.5)
+            checked_boxes = menu.locator("eui-base-v0-checkbox[checked]")
+            names = checked_boxes.evaluate_all("els => els.map(el => el.getAttribute('name'))")
+            stray_names = [n for n in names if n and n != option_text]
+            if not stray_names:
+                break
+            for name in stray_names:
+                stray = menu.get_by_text(name, exact=True).first
+                stray.evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
+                time.sleep(0.3)
         page.keyboard.press("Escape")
         time.sleep(0.3)
 
@@ -224,8 +240,8 @@ def run_scheduled():
             page, out_dir,
             [("CSCF", "HFCSCF01", "Registrations", "IMSCSCFRegisteredUsers"),
              ("CSCF", "RHCSCF01", "Registrations", "IMSCSCFRegisteredUsers")],
-            time_range=None,
-            filename="registrations_cscf.png",
+            time_range="Last 7 days",
+            filename="RegisteredUsers.png",
         )
 
         build_composite(
