@@ -276,6 +276,14 @@ def run_scheduled():
             filename="ActiveBGFCalls_RH.png",
         )
 
+        build_composite(
+            page, out_dir,
+            [("SBG", "HFSBG01", "Registrations", "IMSASBGAKARegUsers"),
+             ("SBG", "RHSBG01", "Registrations", "IMSASBGAKARegUsers")],
+            time_range="Last 7 days",
+            filename="AKARegUsers.png",
+        )
+
         browser.close()
 
     print(f"\nDone. Screenshots saved in {out_dir}/")
