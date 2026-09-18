@@ -7,9 +7,13 @@ CNOM Status Overview screenshot automation.
 Set credentials once per terminal (PowerShell):
     $env:CNOM_USERNAME = "your_username"
     $env:CNOM_PASSWORD = "your_password"
+    $env:EMAIL_TO = "person1@company.com,person2@company.com"
 
-Requires: pip install playwright openpyxl pillow
+Requires: pip install playwright openpyxl pillow pywin32
           playwright install chromium
+
+Email is sent via the Outlook desktop app already logged in on this PC —
+no SMTP server or password needed for that part.
 """
 
 import os
@@ -29,6 +33,7 @@ OUTPUT_ROOT = Path("screenshots")
 
 USERNAME = os.environ.get("CNOM_USERNAME", "")
 PASSWORD = os.environ.get("CNOM_PASSWORD", "")
+EMAIL_TO = os.environ.get("EMAIL_TO", "")  # comma-separated list of recipients
 
 LOGGED_IN_MARKER = "text=Select item"
 NODE_MONITOR_LINK = "text=Node Monitor"
@@ -213,6 +218,36 @@ def build_composite(page, out_dir: Path, panels: list, time_range: str, filename
     stack_images(tmp_paths, out_dir / filename)
 
 
+def send_report_email(out_dir: Path):
+    """Attach every PNG in out_dir and send via the Outlook desktop app
+    that's already logged in on this PC — no SMTP server/credentials needed."""
+    images = sorted(out_dir.glob("*.png"))
+    if not images:
+        print("No images found to email.")
+        return
+    if not EMAIL_TO:
+        print("EMAIL_TO not set — skipping email (files are still saved).")
+        return
+
+    print(f"Emailing {len(images)} file(s) via Outlook to {EMAIL_TO}...")
+    try:
+        import win32com.client
+        outlook = win32com.client.Dispatch("Outlook.Application")
+        mail = outlook.CreateItem(0)  # 0 = olMailItem
+        mail.Subject = f"CNOM Status Report — {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+        mail.To = EMAIL_TO
+        mail.Body = (
+            "Automated CNOM status report attached.\n\n"
+            f"Files: {', '.join(p.name for p in images)}"
+        )
+        for path in images:
+            mail.Attachments.Add(str(path.resolve()))
+        mail.Send()
+        print("Email sent via Outlook.")
+    except Exception as e:
+        print(f"Email failed: {e}")
+
+
 def run_scheduled():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
     out_dir = OUTPUT_ROOT / timestamp
@@ -288,6 +323,8 @@ def run_scheduled():
 
     print(f"\nDone. Screenshots saved in {out_dir}/")
     print(str(out_dir))
+
+    send_report_email(out_dir)
 
 
 if __name__ == "__main__":
