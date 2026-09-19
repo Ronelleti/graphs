@@ -1,45 +1,119 @@
-**Edit a file, create a new file, and clone from Bitbucket in under 2 minutes**
+# CNOM Status Report Automation
 
-When you're done, you can delete the content in this README and update the file with details for others getting started with your repository.
+Automates logging into CNOM (Core Network Operations Manager), capturing a set of
+Status Overview screenshots and graphs, and saving them to a timestamped folder —
+ready to be emailed or picked up by a scheduler.
 
-*We recommend that you open this README in another tab as you perform the tasks below. You can [watch our video](https://youtu.be/0ocf7u76WSo) for a full demo of all the steps in this tutorial. Open the video in a new tab to avoid leaving Bitbucket.*
+## What it produces
 
----
+Each run creates a new folder under `screenshots/<timestamp>/` containing 11 files:
 
-## Edit a file
+- `node_monitor.png` — full Node Monitor status table
+- `RegisteredUsers.png` — CSCF Registrations (HFCSCF01 + RHCSCF01)
+- `AbnormalBGFTerminations_HF.png` / `AbnormalBGFTerminations_RH.png` — SBG H.248 abnormal terminations
+- `ActiveBGFCalls_HF.png` / `ActiveBGFCalls_RH.png` — SBG H.248 active calls
+- `AKARegUsers.png` — SBG Registrations (AKA registered users)
+- `SGW_HFEPG01.png` / `SGW_RHEPG01.png` — EPG SGW Traffic usage + Throughput
+- `PGW_HFEPG01.png` / `PGW_RHEPG01.png` — EPG PGW Traffic usage + Throughput
 
-You’ll start by editing this README file to learn how to edit a file in Bitbucket.
+## Requirements
 
-1. Click **Source** on the left side.
-2. Click the README.md link from the list of files.
-3. Click the **Edit** button.
-4. Delete the following text: *Delete this line to make a change to the README from Bitbucket.*
-5. After making your change, click **Commit** and then **Commit** again in the dialog. The commit page will open and you’ll see the change you just made.
-6. Go back to the **Source** page.
+- **Python 3**, installed with "Add python.exe to PATH" checked during setup
+- **Network/VPN access** to `https://10.21.32.4:8585` (CNOM) already working on the machine — the script cannot set this up itself
+- A CNOM username and password
 
----
+## Installation
 
-## Create a file
+```powershell
+pip install playwright pillow
+playwright install chromium
+```
 
-Next, you’ll add a new file to this repository.
+## Configuration
 
-1. Click the **New file** button at the top of the **Source** page.
-2. Give the file a filename of **contributors.txt**.
-3. Enter your name in the empty file space.
-4. Click **Commit** and then **Commit** again in the dialog.
-5. Go back to the **Source** page.
+Set these two environment variables before running (PowerShell session):
 
-Before you move on, go ahead and explore the repository. You've already seen the **Source** page, but check out the **Commits**, **Branches**, and **Settings** pages.
+```powershell
+$env:CNOM_USERNAME = "your_username"
+$env:CNOM_PASSWORD = "your_password"
+```
 
----
+These aren't saved anywhere by the script — they need to be set each time the
+terminal/session starts, or configured as permanent system environment variables
+if this will run unattended (e.g. via Task Scheduler).
 
-## Clone a repository
+## Usage
 
-Use these steps to clone from SourceTree, our client for using the repository command-line free. Cloning allows you to work on your files locally. If you don't yet have SourceTree, [download and install first](https://www.sourcetreeapp.com/). If you prefer to clone from the command line, see [Clone a repository](https://confluence.atlassian.com/x/4whODQ).
+```powershell
+python cnom_screenshots.py
+```
 
-1. You’ll see the clone button under the **Source** heading. Click that button.
-2. Now click **Check out in SourceTree**. You may need to create a SourceTree account or log in.
-3. When you see the **Clone New** dialog in SourceTree, update the destination path and name if you’d like to and then click **Clone**.
-4. Open the directory you just created to see your repository’s files.
+That's it — no separate setup/login step is needed. On first run (or whenever the
+saved session has expired), the script logs in automatically using the two
+environment variables above and saves a session file (`session.json`) next to the
+script, which it reuses on subsequent runs to skip login when possible.
 
-Now that you're more familiar with your Bitbucket repository, go ahead and add a new file locally. You can [push your change back to Bitbucket with SourceTree](https://confluence.atlassian.com/x/iqyBMg), or you can [add, commit,](https://confluence.atlassian.com/x/8QhODQ) and [push from the command line](https://confluence.atlassian.com/x/NQ0zDQ).
+The script runs **headless** by default (no visible browser window) — this is the
+mode intended for scheduled/unattended runs. A full run currently takes a few
+minutes, since each of the 11 outputs is captured via its own fresh page
+navigation for reliability.
+
+## How it works, briefly
+
+1. Logs into CNOM (or reuses a saved session).
+2. Screenshots the Node Monitor page.
+3. For the IMS-scoped composites (CSCF/SBG graphs): navigates to Status Overview,
+   selects the IMS scope in the Dashboard Tree View, opens Graph Comparison, and
+   fills in Node type / Node name / KPI group / KPI for each panel.
+4. For the EPG-scoped composites (SGW/PGW graphs): switches the Dashboard Tree
+   View scope to Node type → EPG (checking HFEPG01 and RHEPG01), which opens a
+   different "KPI timeline" view with its own Node name / KPI group fields.
+5. Each multi-node graph is built by capturing one node's panel at a time and
+   stitching the images together vertically (via Pillow), rather than relying on
+   the page's own multi-panel UI, which proved unreliable for this purpose.
+
+## Known considerations
+
+- **Email sending is not currently included** in this script — it was removed
+  during development. See the "Adding email" note below if you want to add it
+  back.
+- **Multi-user PCs**: if several people log into this machine under separate
+  Windows accounts, be aware that anything depending on an interactive desktop
+  session (like Outlook automation, if added back in) will only work while that
+  specific user is logged in. For fully unattended, session-independent running,
+  prefer an email-sending API (e.g. Brevo, Resend) over desktop mail clients, and
+  consider packaging this as a Windows Service so it runs regardless of login
+  state.
+- **CNOM's front-end UI is fragile to automate**: several custom UI components
+  (checkboxes, dropdowns) required specific workarounds discovered via trial and
+  error (see comments throughout the script, particularly around
+  `select_dropdown`, `select_epg_scope`, and `select_kpitimeline_dropdown`). If
+  CNOM's UI changes in a future update, these are the functions most likely to
+  need adjustment.
+
+### Adding email back in
+
+The script's output is just a folder of PNG files — any of these approaches can
+pick them up from `screenshots/<timestamp>/` and send them:
+
+- A scheduler tool (e.g. n8n) with its own email/Gmail/Outlook node, pointed at
+  the output folder.
+- Re-adding a `send_report_email()` function directly in Python, using either:
+  - the Outlook desktop COM automation approach (`pywin32`) — only works with
+    **classic** Outlook (not the new Outlook app) and requires Outlook to be
+    open under a logged-in user session; or
+  - a transactional email API (Brevo, Resend, etc.) — works headless/unattended,
+    recommended if this will run as a scheduled task without anyone logged in.
+
+## Scheduling
+
+To run this automatically at set times (e.g. 07:00 / 15:00 / 23:00), use Windows
+Task Scheduler pointed at:
+
+```
+python C:\path\to\cnom_screenshots.py
+```
+
+with the `CNOM_USERNAME` / `CNOM_PASSWORD` environment variables set as system
+environment variables (not just PowerShell session variables) so they're
+available regardless of how the task is triggered.
