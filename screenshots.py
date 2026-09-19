@@ -231,39 +231,51 @@ def build_composite(page, out_dir: Path, panels: list, time_range: str, filename
 # EPG-scope KPI timeline (SGW/PGW composites)
 # ---------------------------------------------------------------------------
 
+def is_tree_item_checked(page, item_label: str) -> bool:
+    tree = page.locator("eui-base-v0-tree")
+    item = tree.locator(f"e-tree-view-item[label='{item_label}']").first
+    cb = item.locator("input[type='checkbox']").first
+    return cb.count() > 0 and cb.is_checked()
+
+
 def select_epg_scope(page):
     print("Selecting EPG (HFEPG01 + RHEPG01)...")
     page.evaluate("window.scrollTo(0, 0)")
     time.sleep(0.3)
     tree = page.locator("eui-base-v0-tree")
 
-    # Read the breadcrumb to know what's currently selected, so we clear
-    # exactly that instead of guessing/checking an unreliable property.
-    breadcrumb = page.locator("text=Select item").first.locator("xpath=preceding-sibling::*[1]")
-    current_text = breadcrumb.inner_text() if breadcrumb.count() > 0 else ""
-    current_names = [n.strip() for n in current_text.split(",") if n.strip()]
+    # Expand both sections, but only if not already expanded (clicking an
+    # already-expanded section toggles it CLOSED instead).
+    if tree.get_by_text("IMS", exact=True).count() == 0 and tree.get_by_text("CORE", exact=True).count() == 0:
+        tree.get_by_text("Network service", exact=True).evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
+        time.sleep(0.5)
+    if tree.get_by_text("EPG", exact=True).count() == 0:
+        tree.get_by_text("Node type", exact=True).evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
+        time.sleep(0.5)
 
-    # Expand both sections so whatever's currently checked is clickable.
-    tree.get_by_text("Network service", exact=True).evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
-    time.sleep(0.5)
-    tree.get_by_text("Node type", exact=True).evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
-    time.sleep(0.5)
+    # Directly read and clear anything actually checked under Network
+    # service, rather than trusting the breadcrumb text.
+    for name in ["IMS", "CORE"]:
+        if is_tree_item_checked(page, name):
+            print(f"   clearing: {name}")
+            tree.get_by_text(name, exact=True).last.evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
+            time.sleep(0.5)
 
-    for name in current_names:
-        item = tree.get_by_text(name, exact=True).last
-        if item.count() > 0:
-            item.evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
-            time.sleep(0.3)
-
-    # Expand EPG and check both its children by clicking their visible text.
-    tree.get_by_text("EPG", exact=True).first.evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
-    time.sleep(0.5)
+    # Expand EPG and check both its children by clicking their visible text
+    # (only expand if not already expanded, same toggle-risk as above).
+    if tree.get_by_text("HFEPG01", exact=True).count() == 0:
+        tree.get_by_text("EPG", exact=True).first.evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
+        time.sleep(0.5)
     for node_name in ["HFEPG01", "RHEPG01"]:
-        item = tree.get_by_text(node_name, exact=True).first
-        item.evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
-        time.sleep(0.3)
+        if not is_tree_item_checked(page, node_name):
+            item = tree.get_by_text(node_name, exact=True).first
+            item.evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
+            time.sleep(0.5)
 
     time.sleep(0.5)
+    new_breadcrumb = page.locator("text=Select item").first.locator("xpath=preceding-sibling::*[1]")
+    print(f"   breadcrumb now shows: '{new_breadcrumb.inner_text().strip() if new_breadcrumb.count() > 0 else '?'}'")
+
     select_btn = page.get_by_role("button", name=re.compile(r"^Select"))
     if select_btn.count() > 0:
         select_btn.first.evaluate("el => { el.scrollIntoView({block: 'center'}); el.click(); }")
