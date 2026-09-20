@@ -1,113 +1,77 @@
-# CNOM Status Report Automation
+# CNOM Report Automation — Setup Guide
 
-Automates logging into CNOM (Core Network Operations Manager), capturing a set of
-Status Overview screenshots and graphs, and saving them to a timestamped folder —
-ready to be emailed or picked up by a scheduler.
+This gives you two programs you can just double-click, no Python or technical
+setup needed beyond the one-time steps below.
 
-## What it produces
+- **fill_report.exe** — pops up a small window to enter today's date and your
+  name, and saves a filled-in copy of the shift report.
+- **screenshots.exe** — logs into CNOM, captures 11 status screenshots, and
+  emails them (plus today's report, if you already ran fill_report.exe) to the
+  team.
 
-Each run creates a new folder under `screenshots/<timestamp>/` containing 11 files:
+## One-time setup (do this once per PC / per Windows account)
 
-- `node_monitor.png` — full Node Monitor status table
-- `RegisteredUsers.png` — CSCF Registrations (HFCSCF01 + RHCSCF01)
-- `AbnormalBGFTerminations_HF.png` / `AbnormalBGFTerminations_RH.png` — SBG H.248 abnormal terminations
-- `ActiveBGFCalls_HF.png` / `ActiveBGFCalls_RH.png` — SBG H.248 active calls
-- `AKARegUsers.png` — SBG Registrations (AKA registered users)
-- `SGW_HFEPG01.png` / `SGW_RHEPG01.png` — EPG SGW Traffic usage + Throughput
-- `PGW_HFEPG01.png` / `PGW_RHEPG01.png` — EPG PGW Traffic usage + Throughput
+### 1. Copy these files into one folder
 
-## Requirements
+Put all of these together in the same folder (e.g. `C:\CNOM\`):
 
-- **Python 3**, installed with "Add python.exe to PATH" checked during setup
-- **Network/VPN access** to `https://10.21.32.4:8585` (CNOM) already working on the machine — the script cannot set this up itself
-- A CNOM username and password
-- A [Brevo](https://brevo.com) account (free tier: 300 emails/day) with a verified sender address and an API key
+- `screenshots.exe`
+- `fill_report.exe`
+- `phonechecks` folder (contains the master template `.docx` file)
+- `ms-playwright` folder (the browser CNOM automation uses — see below)
 
-## Installation
+### 2. Set the environment variables
 
-```powershell
-pip install playwright pillow requests
-playwright install chromium
-```
+Press the Windows key, type **"environment variables"**, open **"Edit the
+system environment variables"** → **Environment Variables**. Under **System
+variables** (not User variables — this makes it work for every account on
+this PC), click **New** and add each of these:
 
-## Configuration
+| Variable name | Value |
+|---|---|
+| `CNOM_USERNAME` | your CNOM login username |
+| `CNOM_PASSWORD` | your CNOM login password |
+| `BREVO_API_KEY` | (ask whoever set up the Brevo account) |
+| `EMAIL_FROM` | the verified sender address (ask if unsure) |
+| `EMAIL_TO` | the recipient list, comma-separated, e.g. `person1@company.com,person2@company.com` |
+| `PLAYWRIGHT_BROWSERS_PATH` | full path to the `ms-playwright` folder you copied in step 1, e.g. `C:\CNOM\ms-playwright` |
 
-Set these five environment variables before running (PowerShell session):
+Click OK on everything to save. **Restart the PC** (or at least fully log out
+and back in) so the new variables take effect everywhere.
 
-```powershell
-$env:CNOM_USERNAME = "your_cnom_username"
-$env:CNOM_PASSWORD = "your_cnom_password"
-$env:BREVO_API_KEY = "your_brevo_api_key"
-$env:EMAIL_FROM = "your_verified_sender@address.com"
-$env:EMAIL_TO = "recipient1@company.com,recipient2@company.com"
-```
+### 3. Confirm CNOM's VPN/network access works
 
-`EMAIL_FROM` must exactly match an address you've verified as a sender in Brevo
-(Settings → Senders, Domains & Dedicated IPs → Senders) — Brevo rejects sending
-from an unverified address. `EMAIL_TO` accepts multiple recipients, comma-separated.
+`screenshots.exe` needs this PC to already be able to reach CNOM
+(`https://10.21.32.4:8585`) the normal way you'd access it in a browser. If
+you can't open that address in Chrome/Edge on this PC, the exe won't work
+either — that's a network/VPN issue to sort out first, not something the exe
+can fix.
 
-None of these are saved anywhere by the script — they need to be set each time
-the terminal/session starts, or configured as permanent system environment
-variables if this will run unattended (e.g. via Task Scheduler).
+## Daily use
 
-## Usage
+1. Double-click **fill_report.exe**. A small window appears with today's date
+   pre-filled — type your name and click **Save**.
+2. Double-click **screenshots.exe**. A window opens and runs through the
+   capture automatically (takes a few minutes) — you'll see it working, no
+   need to click anything. When it finishes, an email goes out automatically
+   with all the screenshots plus today's report.
 
-```powershell
-python cnom_screenshots.py
-```
+That's it — no typing commands, no Python.
 
-That's it — no separate setup/login step is needed. On first run (or whenever the
-saved session has expired), the script logs in automatically using the two
-environment variables above and saves a session file (`session.json`) next to the
-script, which it reuses on subsequent runs to skip login when possible.
+## If something goes wrong
 
-The script runs **headless** by default (no visible browser window) — this is the
-mode intended for scheduled/unattended runs. A full run currently takes a few
-minutes, since each of the 11 outputs is captured via its own fresh page
-navigation for reliability.
+- **A window flashes and closes immediately**: run it from a Command Prompt
+  instead of double-clicking, so the error message stays visible: open
+  Command Prompt, `cd` into the folder, then type `screenshots.exe` and press
+  Enter.
+- **"Executable doesn't exist" mentioning chromium**: the
+  `PLAYWRIGHT_BROWSERS_PATH` variable is missing or points to the wrong
+  folder — recheck step 2.
+- **No email arrives but the screenshots ran fine**: check that `EMAIL_TO`,
+  `EMAIL_FROM`, and `BREVO_API_KEY` are all set correctly, and check your spam
+  folder.
+- **fill_report.exe can't find the template**: make sure the `phonechecks`
+  folder (with the master `.docx` template inside it) is in the same folder
+  as `fill_report.exe`.
 
-## How it works, briefly
-
-1. Logs into CNOM (or reuses a saved session).
-2. Screenshots the Node Monitor page.
-3. For the IMS-scoped composites (CSCF/SBG graphs): navigates to Status Overview,
-   selects the IMS scope in the Dashboard Tree View, opens Graph Comparison, and
-   fills in Node type / Node name / KPI group / KPI for each panel.
-4. For the EPG-scoped composites (SGW/PGW graphs): switches the Dashboard Tree
-   View scope to Node type → EPG (checking HFEPG01 and RHEPG01), which opens a
-   different "KPI timeline" view with its own Node name / KPI group fields.
-5. Each multi-node graph is built by capturing one node's panel at a time and
-   stitching the images together vertically (via Pillow), rather than relying on
-   the page's own multi-panel UI, which proved unreliable for this purpose.
-
-## Known considerations
-
-- **Email is session-independent**: since it's sent via Brevo's API (a plain
-  HTTP request), it works the same whether anyone is logged into the PC or
-  not — unlike a desktop mail client. This makes the script suitable for
-  running as a scheduled task or Windows Service without anyone needing to be
-  logged in.
-- **CNOM's front-end UI is fragile to automate**: several custom UI components
-  (checkboxes, dropdowns) required specific workarounds discovered via trial
-  and error (see comments throughout the script, particularly around
-  `select_dropdown`, `select_epg_scope`, and `select_kpitimeline_dropdown`). If
-  CNOM's UI changes in a future update, these are the functions most likely to
-  need adjustment.
-- **Brevo free tier**: 300 emails/day, more than enough for 3x/day runs. The
-  `EMAIL_FROM` address must stay verified in Brevo — if it's ever removed or
-  the verification lapses, sending will fail silently in the log (the script
-  prints the error rather than crashing).
-
-## Scheduling
-
-To run this automatically at set times (e.g. 07:00 / 15:00 / 23:00), use Windows
-Task Scheduler pointed at:
-
-```
-python C:\path\to\cnom_screenshots.py
-```
-
-with the `CNOM_USERNAME`, `CNOM_PASSWORD`, `BREVO_API_KEY`, `EMAIL_FROM`, and
-`EMAIL_TO` environment variables set as system environment variables (not just
-PowerShell session variables) so they're available regardless of how the task
-is triggered.
+For anything else, contact whoever set this up originally.
