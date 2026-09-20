@@ -7,6 +7,9 @@ CNOM Status Overview screenshot automation — full version.
 Set credentials once per terminal (PowerShell):
     $env:CNOM_USERNAME = "your_username"
     $env:CNOM_PASSWORD = "your_password"
+    $env:BREVO_API_KEY = "your_brevo_api_key"
+    $env:EMAIL_FROM = "your_verified_sender@address.com"
+    $env:EMAIL_TO = "recipient1@company.com,recipient2@company.com"
 
 Requires: pip install playwright openpyxl pillow
           playwright install chromium
@@ -22,10 +25,12 @@ import os
 import re
 import sys
 import time
+import base64
 import argparse
 from datetime import datetime
 from pathlib import Path
 
+import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 from PIL import Image
 
@@ -35,6 +40,10 @@ OUTPUT_ROOT = Path("screenshots")
 
 USERNAME = os.environ.get("CNOM_USERNAME", "")
 PASSWORD = os.environ.get("CNOM_PASSWORD", "")
+
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
+EMAIL_FROM = os.environ.get("EMAIL_FROM", "")  # your verified Brevo sender address
+EMAIL_TO = os.environ.get("EMAIL_TO", "")  # comma-separated list of recipients
 
 LOGGED_IN_MARKER = "text=Select item"
 NODE_MONITOR_LINK = "text=Node Monitor"
@@ -354,6 +363,60 @@ def build_epg_composites(page, out_dir: Path):
 
 
 # ---------------------------------------------------------------------------
+# Email (via Brevo — works headless, no login session needed)
+# ---------------------------------------------------------------------------
+
+def send_report_email(out_dir: Path):
+    """Attach every PNG in out_dir and email it via Brevo's transactional
+    email API (https://api.brevo.com/v3/smtp/email)."""
+    images = sorted(out_dir.glob("*.png"))
+    if not images:
+        print("No images found to email.")
+        return
+    if not BREVO_API_KEY or not EMAIL_FROM or not EMAIL_TO:
+        print("BREVO_API_KEY / EMAIL_FROM / EMAIL_TO not set — skipping email (files are still saved).")
+        return
+
+    print(f"Emailing {len(images)} file(s) via Brevo to {EMAIL_TO}...")
+
+    to_list = [{"email": addr.strip()} for addr in EMAIL_TO.split(",") if addr.strip()]
+
+    attachments = []
+    for path in images:
+        content = base64.b64encode(path.read_bytes()).decode()
+        attachments.append({"content": content, "name": path.name})
+
+    payload = {
+        "sender": {"name": "CNOM Automation", "email": EMAIL_FROM},
+        "to": to_list,
+        "subject": f"CNOM Status Report — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "htmlContent": (
+            "<p>Automated CNOM status report attached.</p>"
+            f"<p>Files: {', '.join(p.name for p in images)}</p>"
+        ),
+        "attachment": attachments,
+    }
+
+    try:
+        response = requests.post(
+            "https://api.brevo.com/v3/smtp/email",
+            headers={
+                "api-key": BREVO_API_KEY,
+                "Content-Type": "application/json",
+                "accept": "application/json",
+            },
+            json=payload,
+            timeout=30,
+        )
+        if response.status_code in (200, 201):
+            print("Email sent via Brevo.")
+        else:
+            print(f"Email failed: {response.status_code} {response.text}")
+    except Exception as e:
+        print(f"Email failed: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -434,6 +497,8 @@ def run_scheduled():
 
     print(f"\nDone. Screenshots saved in {out_dir}/")
     print(str(out_dir))
+
+    send_report_email(out_dir)
 
 
 if __name__ == "__main__":
