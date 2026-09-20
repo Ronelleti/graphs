@@ -2,7 +2,7 @@
 CNOM Status Overview screenshot automation — full version.
 
   python cnom_screenshots.py --setup      -> headed, manual/auto login, saves session.json
-  python cnom_screenshots.py              -> headless scheduled run (what n8n calls)
+  python cnom_screenshots.py              -> headless scheduled run
 
 Set credentials once per terminal (PowerShell):
     $env:CNOM_USERNAME = "your_username"
@@ -11,14 +11,18 @@ Set credentials once per terminal (PowerShell):
     $env:EMAIL_FROM = "your_verified_sender@address.com"
     $env:EMAIL_TO = "recipient1@company.com,recipient2@company.com"
 
-Requires: pip install playwright openpyxl pillow
+Requires: pip install playwright pillow requests
           playwright install chromium
+
+(fill_report.py, the separate shift-report tool used alongside this script,
+needs its own dependency: pip install python-docx — not needed here.)
 
 Produces 11 files per run:
   node_monitor.png, RegisteredUsers.png,
   AbnormalBGFTerminations_HF.png, AbnormalBGFTerminations_RH.png,
   ActiveBGFCalls_HF.png, ActiveBGFCalls_RH.png, AKARegUsers.png,
   SGW_HFEPG01.png, SGW_RHEPG01.png, PGW_HFEPG01.png, PGW_RHEPG01.png
+plus today's phonechecks/<date>.docx report, if one exists.
 """
 
 import os
@@ -44,6 +48,8 @@ PASSWORD = os.environ.get("CNOM_PASSWORD", "")
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
 EMAIL_FROM = os.environ.get("EMAIL_FROM", "")  # your verified Brevo sender address
 EMAIL_TO = os.environ.get("EMAIL_TO", "")  # comma-separated list of recipients
+
+PHONECHECKS_DIR = Path("phonechecks")  # where fill_report.py saves its dated .docx files
 
 LOGGED_IN_MARKER = "text=Select item"
 NODE_MONITOR_LINK = "text=Node Monitor"
@@ -367,8 +373,8 @@ def build_epg_composites(page, out_dir: Path):
 # ---------------------------------------------------------------------------
 
 def send_report_email(out_dir: Path):
-    """Attach every PNG in out_dir and email it via Brevo's transactional
-    email API (https://api.brevo.com/v3/smtp/email)."""
+    """Attach every PNG in out_dir, plus today's phonechecks report (if one
+    exists), and email it via Brevo's transactional email API."""
     images = sorted(out_dir.glob("*.png"))
     if not images:
         print("No images found to email.")
@@ -377,12 +383,22 @@ def send_report_email(out_dir: Path):
         print("BREVO_API_KEY / EMAIL_FROM / EMAIL_TO not set — skipping email (files are still saved).")
         return
 
-    print(f"Emailing {len(images)} file(s) via Brevo to {EMAIL_TO}...")
+    # Look for today's phonechecks report (named like 20_09_26.docx by fill_report.py).
+    today_name = datetime.now().strftime("%d_%m_%y") + ".docx"
+    phonecheck_path = PHONECHECKS_DIR / today_name
+    extra_files = [phonecheck_path] if phonecheck_path.exists() else []
+    if extra_files:
+        print(f"Including phonechecks report: {phonecheck_path}")
+    else:
+        print(f"No phonechecks report found for today ({today_name}) — sending screenshots only.")
+
+    all_files = images + extra_files
+    print(f"Emailing {len(all_files)} file(s) via Brevo to {EMAIL_TO}...")
 
     to_list = [{"email": addr.strip()} for addr in EMAIL_TO.split(",") if addr.strip()]
 
     attachments = []
-    for path in images:
+    for path in all_files:
         content = base64.b64encode(path.read_bytes()).decode()
         attachments.append({"content": content, "name": path.name})
 
@@ -392,7 +408,7 @@ def send_report_email(out_dir: Path):
         "subject": f"CNOM Status Report — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "htmlContent": (
             "<p>Automated CNOM status report attached.</p>"
-            f"<p>Files: {', '.join(p.name for p in images)}</p>"
+            f"<p>Files: {', '.join(p.name for p in all_files)}</p>"
         ),
         "attachment": attachments,
     }
