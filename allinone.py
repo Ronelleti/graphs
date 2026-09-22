@@ -30,10 +30,52 @@ import sys
 import time
 import base64
 import argparse
+import subprocess
 import tkinter as tk
 from tkinter import messagebox
 from datetime import datetime
 from pathlib import Path
+
+
+def ensure_package(pip_name: str, import_name: str = None):
+    """Check that a package is importable; if not, pip-install it. Only
+    useful when running as a raw Python script — once packaged as an exe,
+    all packages are already bundled and this becomes a no-op."""
+    import_name = import_name or pip_name
+    try:
+        __import__(import_name)
+    except ImportError:
+        print(f"Installing missing package: {pip_name}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
+
+
+for _pip_name, _import_name in [
+    ("playwright", "playwright"),
+    ("pillow", "PIL"),
+    ("requests", "requests"),
+    ("python-docx", "docx"),
+]:
+    ensure_package(_pip_name, _import_name)
+
+
+def ensure_chromium():
+    """Check that Playwright's Chromium browser is actually installed;
+    if not, download it. Only works if playwright's pip package is
+    present with a working sys.executable — same caveat as above."""
+    from playwright.sync_api import sync_playwright
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            browser.close()
+    except Exception as e:
+        if "executable doesn't exist" in str(e).lower() or "playwright install" in str(e).lower():
+            print("Chromium browser not found — installing (this can take a minute)...")
+            subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+        else:
+            raise
+
+
+ensure_chromium()
 
 import docx
 import requests
@@ -107,20 +149,77 @@ def run_report_popup() -> Path:
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
+    from tkinter import ttk
+
     root = tk.Tk()
     root.title("Shift Report")
-    root.geometry("320x150")
+    root.configure(bg="#f4f6f9")
+    root.resizable(False, False)
 
-    tk.Label(root, text="Check date (DD.MM.YY):").pack(pady=(15, 0))
-    date_entry = tk.Entry(root, justify="center")
+    # Center the window on screen
+    win_w, win_h = 380, 300
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    x = (screen_w // 2) - (win_w // 2)
+    y = (screen_h // 2) - (win_h // 2)
+    root.geometry(f"{win_w}x{win_h}+{x}+{y}")
+
+    FONT_TITLE = ("Segoe UI", 15, "bold")
+    FONT_LABEL = ("Segoe UI", 10)
+    FONT_ENTRY = ("Segoe UI", 11)
+    ACCENT = "#2f6fed"
+
+    style = ttk.Style()
+    style.theme_use("clam")
+    style.configure("TEntry", font=FONT_ENTRY, padding=8, relief="flat")
+    style.configure(
+        "Accent.TButton",
+        font=("Segoe UI", 10, "bold"),
+        foreground="white",
+        background=ACCENT,
+        padding=(10, 8),
+        borderwidth=0,
+    )
+    style.map("Accent.TButton", background=[("active", "#255ecb")])
+
+    # Header bar
+    header = tk.Frame(root, bg=ACCENT, height=56)
+    header.pack(fill="x")
+    tk.Label(header, text="📋  Shift Report", font=FONT_TITLE, bg=ACCENT, fg="white").pack(pady=12)
+
+    # Body
+    body = tk.Frame(root, bg="#f4f6f9", padx=30, pady=25)
+    body.pack(fill="both", expand=True)
+
+    tk.Label(body, text="Check date (DD.MM.YY)", font=FONT_LABEL, bg="#f4f6f9", fg="#333").pack(anchor="w")
+    date_entry = ttk.Entry(body, font=FONT_ENTRY, justify="center")
     date_entry.insert(0, datetime.now().strftime("%d.%m.%y"))
-    date_entry.pack(pady=5)
+    date_entry.pack(fill="x", pady=(4, 18))
 
-    tk.Label(root, text="Examiner name:").pack()
-    name_entry = tk.Entry(root, justify="center")
-    name_entry.pack(pady=5)
+    tk.Label(body, text="Examiner name", font=FONT_LABEL, bg="#f4f6f9", fg="#333").pack(anchor="w")
+    name_entry = ttk.Entry(body, font=FONT_ENTRY, justify="center")
+    name_entry.pack(fill="x", pady=(4, 24))
+    name_entry.focus()
 
-    tk.Button(root, text="Save", command=on_submit, width=12).pack(pady=15)
+    save_btn = tk.Button(
+        body,
+        text="Start Shift  ➜",
+        font=("Segoe UI", 12, "bold"),
+        fg="white",
+        bg=ACCENT,
+        activebackground="#255ecb",
+        activeforeground="white",
+        relief="flat",
+        bd=0,
+        cursor="hand2",
+        pady=10,
+        command=on_submit,
+    )
+    save_btn.pack(fill="x")
+    save_btn.bind("<Enter>", lambda e: save_btn.config(bg="#255ecb"))
+    save_btn.bind("<Leave>", lambda e: save_btn.config(bg=ACCENT))
+
+    root.bind("<Return>", lambda event: on_submit())
 
     root.mainloop()
     return result["path"]
