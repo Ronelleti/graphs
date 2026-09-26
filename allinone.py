@@ -15,7 +15,7 @@ if one is set (e.g. CNOM_USERNAME) it is used only when config.ini leaves
 that value empty.
 
 Per-user files (login sessions, screenshots, filled reports) go under
-%LOCALAPPDATA%\dailychecks, so several Windows users can share one PC.
+%LOCALAPPDATA%\\dailychecks, so several Windows users can share one PC.
 
 Requires: pip install playwright pillow requests python-docx
           playwright install chromium
