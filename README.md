@@ -29,36 +29,75 @@ pip install playwright pillow requests python-docx
 playwright install chromium
 ```
 
-## Configuration
+## Configuration (once per PC, by the tool owner only)
 
-Set these 7 environment variables (PowerShell session, or as permanent
-SYSTEM variables — see the exe section below):
+All settings live in **`config.ini` next to `allinone.exe`**. No environment
+variables are needed, so users without permission to edit them can still run
+the tool. Everyone shares the same CNOM and Metabase account, one Brevo
+sender and one receiver, so nobody using the tool has to enter anything.
 
-```powershell
-$env:CNOM_USERNAME = "your_cnom_username"
-$env:CNOM_PASSWORD = "your_cnom_password"
-$env:METABASE_USERNAME = "your_metabase_username"
-$env:METABASE_PASSWORD = "your_metabase_password"
-$env:BREVO_API_KEY = "your_brevo_api_key"
-$env:EMAIL_FROM = "your_verified_sender@address.com"
-$env:EMAIL_TO = "recipient1@company.com,recipient2@company.com"
+1. Copy `config.example.ini` to `config.ini` in the same folder as the exe.
+2. Fill in the values (no quotes; `$`, `%` and `"` in passwords are fine):
+
+```ini
+[cnom]
+username = shared_cnom_username
+password = shared_cnom_password
+
+[metabase]
+username = shared_metabase_username
+password = shared_metabase_password
+
+[email]
+brevo_api_key = your_brevo_api_key
+from = verified_sender@company.com
+to = receiver@company.com
 ```
 
-## Folder layout required
+If a value is left empty, the matching environment variable (`CNOM_USERNAME`,
+`EMAIL_TO`, ...) is used instead, so older setups keep working.
+
+Every email goes from the one verified sender to the one receiver. The
+subject shows the check date and the examiner's name, and the body shows
+which PC and Windows user ran it, so the reports can be told apart.
+
+`config.ini` is in `.gitignore`. Never commit it.
+
+> Anyone who can run the tool can open `config.ini`, so treat the Brevo key
+> as known to all users. In Brevo, restrict the key to your office's public
+> IP (Security → Authorized IPs) and use a key made only for this tool.
+
+## Folder layout
 
 ```
-your-folder/
-  all_in_one.py
-  phonechecks/
-    19_09_26.docx      <- master template (name/date get overwritten each run)
-  session.json          <- created automatically after first CNOM login
-  metabase_session.json <- created automatically after first Metabase login
+C:\dailychecks\             <- set up by the tool owner, same on both PCs
+  allinone.exe
+  config.ini                 <- your real settings (not in git)
+  ms-playwright\             <- Chromium, copied here (exe only)
+  phonechecks\
+    19_09_26.docx            <- master template (read only, never overwritten)
 ```
+
+Each Windows user gets their own folder, created automatically:
+
+```
+%LOCALAPPDATA%\dailychecks\
+  session.json               <- CNOM login session
+  metabase_session.json      <- Metabase login session
+  screenshots\<date_time>\    <- captured images
+  reports\<date>.docx         <- filled-in shift report
+```
+
+So several people can use the same PC under different Windows accounts
+without sharing sessions or running into "access denied" on each other's
+files. The program finds `config.ini` and the template from the exe's own
+folder, so it works from a shortcut or Task Scheduler no matter what the
+"Start in" folder is.
 
 ## Usage
 
 ```powershell
-python all_in_one.py
+python allinone.py
 ```
 
 The popup appears first — fill it in, then the browser automation runs on
@@ -89,13 +128,13 @@ near the bottom of the script.
 
 ```powershell
 pip install pyinstaller
-pyinstaller --onefile all_in_one.py
+pyinstaller --onefile allinone.py
 ```
 
 (No `--windowed` flag this time — we want the console window to stay visible
 so you can see the automation's progress, in addition to the popup.)
 
-The finished `all_in_one.exe` appears in the `dist\` folder. Move it out to
+The finished `allinone.exe` appears in the `dist\` folder. Move it out to
 your main project folder (next to `phonechecks\`, `session.json`, etc.) —
 same as with the earlier exe files.
 
@@ -105,25 +144,23 @@ This is the real test of whether the exe is truly portable. On the second
 PC:
 
 ### 1. Copy the whole folder over
-Copy the entire folder containing `all_in_one.exe`, `phonechecks\` (with the
-template `.docx` inside), and (if they already exist) `session.json` /
-`metabase_session.json` — though those two will just get recreated on first
-run if missing, since login is automatic.
+Copy the folder containing `allinone.exe`, `config.ini` and `phonechecks\`
+(with the template `.docx` inside). The session files are per-user and get
+created on first run, so there's nothing else to copy.
 
-### 2. Copy the Chromium browser folder
+### 2. Copy the Chromium browser folder next to the exe
 The exe does **not** bundle Playwright's browser binary. Copy your
 `ms-playwright` folder from:
 ```
 C:\Users\<your_username>\AppData\Local\ms-playwright
 ```
-to the second PC — anywhere is fine, just note the path.
+into the tool folder, so it sits at `C:\dailychecks\ms-playwright\`. The
+program finds it there by itself for every Windows user. No environment
+variable is needed.
 
-### 3. Set the 8 environment variables as SYSTEM variables
-Same 7 as before, **plus** `PLAYWRIGHT_BROWSERS_PATH` pointing at wherever
-you put the copied `ms-playwright` folder on that PC. Set these as **System**
-variables (not User) so they work regardless of which Windows account is
-logged in — see `SETUP_FOR_TEAM.md` from the CNOM project for the exact
-Windows menu steps (same process, just 8 variables instead of 6).
+### 3. Create config.ini
+Copy `config.ini` from the first PC (or fill in `config.example.ini`), as
+described under **Configuration** above.
 
 ### 4. Confirm network access works on that PC
 Both CNOM's and Metabase's addresses need to actually be reachable from that
@@ -132,7 +169,7 @@ testing the exe.
 
 ### 5. Run it
 ```
-.\all_in_one.exe
+.\allinone.exe
 ```
 The popup should appear, then the browser automation should run through both
 CNOM and Metabase, then send the email — all without Python or pip installed
@@ -140,5 +177,5 @@ on that second machine at all.
 
 If something fails on the second PC that worked fine on the first, the two
 most likely causes (based on everything we've hit so far) are: the Chromium
-folder path being wrong, or that PC's network/VPN not actually reaching
+folder missing from `C:\dailychecks\ms-playwright\`, or that PC's network/VPN not actually reaching
 CNOM/Metabase the way the first one does.

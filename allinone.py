@@ -8,15 +8,14 @@ All-in-one shift report automation.
   4. Emails all of it together (14 attachments: 11 CNOM PNGs + 2 Metabase
      PNGs + the shift report .docx) via Brevo.
 
-Set credentials once per terminal (PowerShell), or as permanent SYSTEM
-environment variables for unattended/shared-PC use:
-    $env:CNOM_USERNAME = "your_cnom_username"
-    $env:CNOM_PASSWORD = "your_cnom_password"
-    $env:METABASE_USERNAME = "your_metabase_username"
-    $env:METABASE_PASSWORD = "your_metabase_password"
-    $env:BREVO_API_KEY = "your_brevo_api_key"
-    $env:EMAIL_FROM = "your_verified_sender@address.com"
-    $env:EMAIL_TO = "recipient1@company.com,recipient2@company.com"
+Settings (shared CNOM/Metabase logins, Brevo key, sender, receiver) are read
+from config.ini next to the exe/script — copy config.example.ini to
+config.ini and fill it in once per PC. No environment variables are needed;
+if one is set (e.g. CNOM_USERNAME) it is used only when config.ini leaves
+that value empty.
+
+Per-user files (login sessions, screenshots, filled reports) go under
+%LOCALAPPDATA%\dailychecks, so several Windows users can share one PC.
 
 Requires: pip install playwright pillow requests python-docx
           playwright install chromium
@@ -29,12 +28,26 @@ import re
 import sys
 import time
 import base64
+import html
 import argparse
+import configparser
 import subprocess
 import tkinter as tk
 from tkinter import messagebox
 from datetime import datetime
 from pathlib import Path
+
+# Folder of the exe (or of this script) — holds config.ini, the template and
+# optionally ms-playwright\, regardless of which folder it was launched from.
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys.executable).resolve().parent
+else:
+    APP_DIR = Path(__file__).resolve().parent
+
+# A Chromium folder copied next to the exe is used automatically, so no
+# PLAYWRIGHT_BROWSERS_PATH environment variable is needed on the PC.
+if (APP_DIR / "ms-playwright").is_dir() and not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(APP_DIR / "ms-playwright")
 
 
 def ensure_package(pip_name: str, import_name: str = None):
@@ -86,28 +99,43 @@ from PIL import Image
 # Config
 # ---------------------------------------------------------------------------
 
+# Per-Windows-user folder, always writable without admin rights.
+USER_DIR = Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "dailychecks"
+USER_DIR.mkdir(parents=True, exist_ok=True)
+
+CONFIG_PATH = APP_DIR / "config.ini"
+_config = configparser.ConfigParser(interpolation=None)  # allow % in passwords
+_config.read(CONFIG_PATH, encoding="utf-8-sig")  # utf-8-sig: Notepad may add a BOM
+
+
+def setting(section: str, key: str, env_name: str) -> str:
+    """config.ini first, environment variable as a fallback."""
+    value = _config.get(section, key, fallback="").strip()
+    return value or os.environ.get(env_name, "").strip()
+
+
 CNOM_BASE_URL = "https://10.21.32.4:8585/"
-CNOM_SESSION_FILE = "session.json"
+CNOM_SESSION_FILE = str(USER_DIR / "session.json")
 
 METABASE_BASE_URL = "http://10.11.2.32:3000"
-METABASE_SESSION_FILE = "metabase_session.json"
+METABASE_SESSION_FILE = str(USER_DIR / "metabase_session.json")
 METABASE_URLS = {
     "dashboard_1288.png": f"{METABASE_BASE_URL}/dashboard/1288",
     "question_17017_notebook.png": f"{METABASE_BASE_URL}/question/17017/notebook",
 }
 
-OUTPUT_ROOT = Path("screenshots")
-PHONECHECKS_DIR = Path("phonechecks")
-REPORT_TEMPLATE_PATH = PHONECHECKS_DIR / "19_09_26.docx"  # master template
+OUTPUT_ROOT = USER_DIR / "screenshots"
+REPORTS_DIR = USER_DIR / "reports"
+REPORT_TEMPLATE_PATH = APP_DIR / "phonechecks" / "19_09_26.docx"  # master template
 
-CNOM_USERNAME = os.environ.get("CNOM_USERNAME", "")
-CNOM_PASSWORD = os.environ.get("CNOM_PASSWORD", "")
-METABASE_USERNAME = os.environ.get("METABASE_USERNAME", "")
-METABASE_PASSWORD = os.environ.get("METABASE_PASSWORD", "")
+CNOM_USERNAME = setting("cnom", "username", "CNOM_USERNAME")
+CNOM_PASSWORD = setting("cnom", "password", "CNOM_PASSWORD")
+METABASE_USERNAME = setting("metabase", "username", "METABASE_USERNAME")
+METABASE_PASSWORD = setting("metabase", "password", "METABASE_PASSWORD")
 
-BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
-EMAIL_FROM = os.environ.get("EMAIL_FROM", "")
-EMAIL_TO = os.environ.get("EMAIL_TO", "")
+BREVO_API_KEY = setting("email", "brevo_api_key", "BREVO_API_KEY")
+EMAIL_FROM = setting("email", "from", "EMAIL_FROM")
+EMAIL_TO = setting("email", "to", "EMAIL_TO")
 
 CNOM_LOGGED_IN_MARKER = "text=Select item"
 NODE_MONITOR_LINK = "text=Node Monitor"
@@ -119,10 +147,10 @@ GRAPH_COMPARISON_TAB = "text=Graph comparison"
 # Step 1: shift report popup (from fill_report.py)
 # ---------------------------------------------------------------------------
 
-def run_report_popup() -> Path:
+def run_report_popup() -> dict:
     """Blocks until the user fills in date/name and clicks Save (or closes
-    the window). Returns the saved file path, or None if cancelled."""
-    result = {"path": None}
+    the window). Returns {"path", "date", "name"}; all None if cancelled."""
+    result = {"path": None, "date": None, "name": None}
 
     def on_submit():
         date_str = date_entry.get().strip()
@@ -142,9 +170,10 @@ def run_report_popup() -> Path:
             table.rows[0].cells[1].text = date_str  # תאריך בדיקה
             table.rows[0].cells[3].text = name_str  # שם הבודק
             safe_date = date_str.replace(".", "_").replace("/", "_")
-            out_path = PHONECHECKS_DIR / f"{safe_date}.docx"
+            REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+            out_path = REPORTS_DIR / f"{safe_date}.docx"
             doc.save(out_path)
-            result["path"] = out_path
+            result.update(path=out_path, date=date_str, name=name_str)
             root.destroy()
         except Exception as e:
             messagebox.showerror("Error", str(e))
@@ -222,7 +251,7 @@ def run_report_popup() -> Path:
     root.bind("<Return>", lambda event: on_submit())
 
     root.mainloop()
-    return result["path"]
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -231,7 +260,7 @@ def run_report_popup() -> Path:
 
 def cnom_do_login(page):
     if not CNOM_USERNAME or not CNOM_PASSWORD:
-        print("ERROR: CNOM_USERNAME / CNOM_PASSWORD environment variables are not set.")
+        print(f"ERROR: CNOM username/password missing in {CONFIG_PATH}")
         sys.exit(1)
     print("[CNOM] Filling in login form automatically...")
     page.fill("#username", CNOM_USERNAME)
@@ -557,7 +586,7 @@ def run_cnom_captures(browser, out_dir: Path):
 
 def metabase_do_login(page):
     if not METABASE_USERNAME or not METABASE_PASSWORD:
-        print("ERROR: METABASE_USERNAME / METABASE_PASSWORD environment variables are not set.")
+        print(f"ERROR: Metabase username/password missing in {CONFIG_PATH}")
         sys.exit(1)
     print("[Metabase] Going to login page...")
     page.goto(f"{METABASE_BASE_URL}/auth/login")
@@ -621,7 +650,7 @@ def run_metabase_captures(browser, out_dir: Path):
 # Step 4: Email
 # ---------------------------------------------------------------------------
 
-def send_report_email(out_dir: Path, report_path: Path):
+def send_report_email(out_dir: Path, report_path: Path, check_date: str = None, examiner: str = None):
     images = sorted(out_dir.glob("*.png"))
     all_files = images + ([report_path] if report_path and report_path.exists() else [])
 
@@ -629,7 +658,7 @@ def send_report_email(out_dir: Path, report_path: Path):
         print("No files found to email.")
         return
     if not BREVO_API_KEY or not EMAIL_FROM or not EMAIL_TO:
-        print("BREVO_API_KEY / EMAIL_FROM / EMAIL_TO not set — skipping email (files are still saved).")
+        print(f"Brevo key / sender / receiver missing in {CONFIG_PATH} — skipping email (files are still saved).")
         return
 
     print(f"Emailing {len(all_files)} file(s) via Brevo to {EMAIL_TO}...")
@@ -641,13 +670,24 @@ def send_report_email(out_dir: Path, report_path: Path):
         content = base64.b64encode(path.read_bytes()).decode()
         attachments.append({"content": content, "name": path.name})
 
+    # Everyone sends from the same sender to the same receiver, so the
+    # subject/body say who ran it and from which PC.
+    subject = f"Shift Report — {check_date or datetime.now().strftime('%d.%m.%y')}"
+    if examiner:
+        subject += f" — {examiner}"
+    pc_name = os.environ.get("COMPUTERNAME", "")
+    win_user = os.environ.get("USERNAME", "")
+
     payload = {
         "sender": {"name": "Shift Report Automation", "email": EMAIL_FROM},
         "to": to_list,
-        "subject": f"Shift Report — {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "subject": subject,
         "htmlContent": (
             "<p>Automated shift report attached.</p>"
-            f"<p>Files: {', '.join(p.name for p in all_files)}</p>"
+            f"<p>Examiner: {html.escape(examiner or '(not filled in)')}<br>"
+            f"PC: {html.escape(pc_name)} &nbsp; Windows user: {html.escape(win_user)}<br>"
+            f"Sent: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>"
+            f"<p>Files: {html.escape(', '.join(p.name for p in all_files))}</p>"
         ),
         "attachment": attachments,
     }
@@ -675,9 +715,32 @@ def send_report_email(out_dir: Path, report_path: Path):
 # Main
 # ---------------------------------------------------------------------------
 
+def check_config():
+    """Stop early with a clear message if the shared logins are missing."""
+    missing = [name for name, value in [
+        ("[cnom] username", CNOM_USERNAME),
+        ("[cnom] password", CNOM_PASSWORD),
+        ("[metabase] username", METABASE_USERNAME),
+        ("[metabase] password", METABASE_PASSWORD),
+    ] if not value]
+    if not missing:
+        return
+    msg = (f"Missing settings in:\n{CONFIG_PATH}\n\n" + "\n".join(missing)
+           + "\n\nAsk the tool owner to set up config.ini on this PC.")
+    print("ERROR: " + msg)
+    root = tk.Tk()
+    root.withdraw()
+    messagebox.showerror("Daily Checks — setup needed", msg)
+    root.destroy()
+    sys.exit(1)
+
+
 def main():
+    check_config()
+
     print("Opening shift report form...")
-    report_path = run_report_popup()
+    report = run_report_popup()
+    report_path = report["path"]
     if report_path:
         print(f"Shift report saved: {report_path}")
     else:
@@ -697,7 +760,7 @@ def main():
 
     print(f"\nDone. Files saved in {out_dir}/")
 
-    send_report_email(out_dir, report_path)
+    send_report_email(out_dir, report_path, report["date"], report["name"])
 
 
 if __name__ == "__main__":

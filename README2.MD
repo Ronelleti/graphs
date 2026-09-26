@@ -9,8 +9,7 @@
 ## מה צריך לפני שמתחילים
 
 - חיבור לרשת החברה / VPN, עם גישה ל-CNOM ול-Metabase
-- שם משתמש וסיסמה ל-CNOM ול-Metabase
-- מפתח API של Brevo וכתובת שולח מאומתת (לקבל מאחראי הכלי)
+- קובץ `config.ini` מאחראי הכלי (פרטי ההתחברות המשותפים, מפתח Brevo, שולח ונמען)
 - כ-500MB פנויים בדיסק
 
 ---
@@ -41,6 +40,8 @@ python --version
 ```
 C:\dailychecks\
 ├── allinone.exe        (או allinone.py)
+├── config.ini          ← ההגדרות (מאחראי הכלי בלבד)
+├── ms-playwright\      ← הדפדפן Chromium (רק כשמריצים את ה-exe)
 ├── phonechecks\        ← להעתיק את כל התיקייה כמו שהיא, עם כל הקבצים שבתוכה
 └── README.md
 ```
@@ -76,43 +77,54 @@ python -m playwright install chromium
 
 ---
 
-## שלב 4 – הגדרת משתני סביבה
+## שלב 4 – קובץ ההגדרות config.ini (אחראי הכלי בלבד)
 
-> ⚠️ פקודות מהסוג `$env:NAME = "..."` תקפות **רק לחלון ה-PowerShell הנוכחי**, ונעלמות כשסוגרים אותו.
-> כדי שההגדרות יישמרו לתמיד (למשתמש שלך בלבד וללא אדמין), צריך להשתמש בפקודות שבהמשך.
+**לא צריך יותר משתני סביבה.** כל ההגדרות נמצאות בקובץ אחד, `config.ini`, שיושב ליד `allinone.exe`.
+אחראי הכלי מגדיר אותו **פעם אחת בכל מחשב**, ומאותו רגע כל משתמש Windows במחשב יכול להריץ את הכלי בלי להגדיר כלום.
 
-יש להחליף את הערכים בפרטים שלך ולהריץ ב-PowerShell:
+1. להעתיק את `config.example.ini` לאותה תיקייה, ולשנות את שמו ל-`config.ini`.
+2. לפתוח אותו ב-Notepad ולמלא את הערכים:
 
-```powershell
-[Environment]::SetEnvironmentVariable('CNOM_USERNAME',     'your_cnom_username',     'User')
-[Environment]::SetEnvironmentVariable('CNOM_PASSWORD',     'your_cnom_password',     'User')
-[Environment]::SetEnvironmentVariable('METABASE_USERNAME', 'your_metabase_username', 'User')
-[Environment]::SetEnvironmentVariable('METABASE_PASSWORD', 'your_metabase_password', 'User')
-[Environment]::SetEnvironmentVariable('BREVO_API_KEY',     'your_brevo_api_key',     'User')
-[Environment]::SetEnvironmentVariable('EMAIL_FROM',        'your_verified_sender@address.com', 'User')
-[Environment]::SetEnvironmentVariable('EMAIL_TO',          'recipient1@company.com,recipient2@company.com', 'User')
+```ini
+[cnom]
+username = shared_cnom_username
+password = shared_cnom_password
+
+[metabase]
+username = shared_metabase_username
+password = shared_metabase_password
+
+[email]
+brevo_api_key = your_brevo_api_key
+from = verified_sender@company.com
+to = receiver@company.com
 ```
 
 שימו לב:
 
-- יש להשתמש **בגרש בודד** `' '` ולא במירכאות `" "`. אם בסיסמה יש תו `$`, מירכאות כפולות ישבשו אותה.
-- ב-`EMAIL_TO` מפרידים בין הנמענים בפסיק, **בלי רווחים**.
-- `EMAIL_FROM` חייבת להיות כתובת שאומתה ב-Brevo.
+- כותבים את הערכים **בלי מירכאות**. תווים כמו `$`, `%` או `"` בסיסמה תקינים.
+- `from` חייבת להיות הכתובת שאומתה ב-Brevo. כל המיילים נשלחים ממנה לנמען שב-`to`.
+- כדי לדעת מי שלח כל דוח, בנושא המייל מופיעים תאריך הבדיקה ושם הבודק, ובגוף המייל מופיעים שם המחשב ומשתמש ה-Windows.
+- אם ערך נשאר ריק, הכלי משתמש במשתנה הסביבה המתאים (למשל `CNOM_USERNAME`), אם הוגדר כזה.
 
-**אחרי ההגדרה:** לסגור את כל חלונות ה-PowerShell ולפתוח חלון חדש, ואז לבדוק שהמשתנים קיימים (מוצגים רק השמות, בלי הסיסמאות):
+### 📁 קבצים אישיים לכל משתמש
 
-```powershell
-Get-ChildItem Env: | Where-Object { $_.Name -match 'CNOM|METABASE|BREVO|EMAIL' } | Select-Object Name
+הכלי שומר באופן אוטומטי את הקבצים של כל משתמש Windows בתיקייה משלו:
+
+```
+%LOCALAPPDATA%\dailychecks\
+├── session.json / metabase_session.json   ← החיבור ל-CNOM ול-Metabase
+├── screenshots\                            ← צילומי המסך
+└── reports\                                ← דוחות המשמרת שמולאו
 ```
 
-אמורות להופיע 7 שורות.
-
-**דרך חלופית בלי פקודות:** תפריט התחל ← לחפש "ערוך משתני סביבה עבור החשבון שלך" (Edit environment variables for your account) ← New, ולהוסיף כל משתנה בנפרד. גם זה לא דורש אדמין.
+ככה כמה אנשים יכולים לעבוד על אותו מחשב, כל אחד עם משתמש Windows משלו, בלי לדרוס קבצים זה של זה ובלי שגיאות הרשאה.
+תבנית הדוח שב-`phonechecks\` רק נקראת, ואף פעם לא נדרסת.
 
 ### 🔒 אבטחה
 
-- כל משתמש מגדיר את **פרטי ההתחברות שלו**. לא משתפים סיסמאות.
-- לא כותבים סיסמאות או מפתח API בתוך הקוד, ולא מעלים אותם ל-Git.
+- כל מי שמריץ את הכלי יכול לפתוח את `config.ini`. לכן כדאי להגביל ב-Brevo את המפתח לכתובת ה-IP של המשרד (Security ← Authorized IPs), ולהשתמש במפתח שנוצר רק בשביל הכלי הזה.
+- לא מעלים את `config.ini` ל-Git (הוא כבר ב-`.gitignore`).
 
 ---
 
@@ -130,7 +142,7 @@ cd C:\dailychecks
 python allinone.py
 ```
 
-בסיום הריצה נשלח מייל עם התוצאות לנמענים שהוגדרו ב-`EMAIL_TO`.
+בסיום הריצה נשלח מייל עם התוצאות לנמען שהוגדר ב-`config.ini`.
 
 > בהרצה הראשונה של ה-exe ייתכן ש-Windows SmartScreen יחסום אותו. במקרה כזה יש ללחוץ **More info** ואז **Run anyway**.
 
@@ -143,7 +155,7 @@ python allinone.py
 3. Trigger: **Daily**, ולבחור שעה
 4. Action: **Start a program**
    - **Program/script:** `C:\dailychecks\allinone.exe`
-   - **Start in:** `C:\dailychecks` ← **חובה למלא**, אחרת הכלי לא ימצא את תיקיית `phonechecks`
+   - **Start in:** `C:\dailychecks` (מומלץ; הכלי מוצא את `config.ini` ואת `phonechecks` גם בלי זה)
 5. לסיים. המשימה תרוץ כשהמשתמש מחובר (Run only when user is logged on), וזה לא דורש אדמין.
 
 אם מריצים את `allinone.py` במקום ה-exe:
@@ -162,9 +174,9 @@ python allinone.py
 | הפקודה `python` פותחת את Microsoft Store | כינוי מערכת של Windows | הגדרות ← אפליקציות ← הגדרות אפליקציה מתקדמות ← App execution aliases ← לכבות את python.exe ו-python3.exe |
 | `Executable doesn't exist ... ms-playwright` | הדפדפן לא הותקן | להריץ `python -m playwright install chromium` |
 | `Timeout 30000ms exceeded` ב-Metabase | Metabase או מסד הנתונים שלו לא זמינים, או שאין VPN | לפתוח את Metabase בדפדפן רגיל ולבדוק. אם הוא למטה, הבעיה אינה בכלי |
-| משתנה סביבה ריק / `KeyError` | החלון נפתח לפני ההגדרה, או שהמשתנה לא הוגדר | לפתוח PowerShell חדש ולחזור על הבדיקה בשלב 4 |
-| שגיאת `401` מ-Brevo | מפתח API שגוי | לבדוק את `BREVO_API_KEY` |
-| המייל לא נשלח / שגיאת sender | כתובת השולח לא מאומתת ב-Brevo | לבדוק את `EMAIL_FROM` |
+| חלון "Daily Checks — setup needed" | `config.ini` חסר או שחסרים בו ערכים | לפנות לאחראי הכלי (שלב 4) |
+| שגיאת `401` מ-Brevo | מפתח API שגוי, או שה-IP של המחשב לא מאושר ב-Brevo | לבדוק את `brevo_api_key` ואת רשימת ה-IP המאושרים |
+| המייל לא נשלח / שגיאת sender | כתובת השולח לא מאומתת ב-Brevo | לבדוק את `from` ב-`config.ini` |
 | שגיאת SSL או חיבור ב-pip | פרוקסי של החברה | להשתמש בפקודות הפרוקסי שבשלב 3 |
 
 אם התקלה לא מופיעה כאן, יש לשלוח לאחראי הכלי צילום מסך של **כל** הודעת השגיאה.

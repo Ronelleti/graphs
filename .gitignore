@@ -48,3 +48,8 @@ Thumbs.db
 *.mov
 *.wmv
 
+
+# Daily Checks: real settings and login sessions must never be committed
+config.ini
+session.json
+metabase_session.json
