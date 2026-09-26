@@ -584,30 +584,59 @@ def run_cnom_captures(browser, out_dir: Path):
 # Step 3: Metabase screenshots
 # ---------------------------------------------------------------------------
 
+def metabase_is_logged_in(page) -> bool:
+    """Ask Metabase's API directly — doesn't depend on the page's redirects
+    having finished loading."""
+    try:
+        return page.request.get(f"{METABASE_BASE_URL}/api/user/current", timeout=20000).ok
+    except Exception:
+        return False
+
+
 def metabase_do_login(page):
     if not METABASE_USERNAME or not METABASE_PASSWORD:
         print(f"ERROR: Metabase username/password missing in {CONFIG_PATH}")
         sys.exit(1)
-    print("[Metabase] Going to login page...")
-    page.goto(f"{METABASE_BASE_URL}/auth/login")
-    page.wait_for_load_state("networkidle")
 
-    print("[Metabase] Filling in login form...")
-    page.get_by_placeholder("nicetoseeyou@email.com").fill(METABASE_USERNAME)
-    page.get_by_placeholder("Shhh...").fill(METABASE_PASSWORD)
-    page.get_by_role("button", name="Sign in").click()
-    page.wait_for_load_state("networkidle")
-    time.sleep(2)
+    # Log in through the API the login page itself uses; the session cookie
+    # it returns lands in this browser context.
+    print("[Metabase] Logging in...")
+    reason = ""
+    try:
+        response = page.request.post(
+            f"{METABASE_BASE_URL}/api/session",
+            data={"username": METABASE_USERNAME, "password": METABASE_PASSWORD},
+            timeout=30000,
+        )
+        if not response.ok:
+            reason = f"{response.status} {response.text()[:300]}"
+        elif not metabase_is_logged_in(page):
+            # Older Metabase versions return the session id without a cookie.
+            session_id = response.json().get("id", "")
+            host = METABASE_BASE_URL.split("//", 1)[1].split("/")[0].split(":")[0]
+            page.context.add_cookies([{"name": "metabase.SESSION", "value": session_id,
+                                       "domain": host, "path": "/"}])
+    except Exception as e:
+        reason = first_line(e)
 
-    if "/auth/login" in page.url:
-        print("[Metabase] WARNING: still on the login page after submitting — login likely failed.")
-    else:
-        print("[Metabase] Login successful.")
+    # Fallback: the login form, waiting until Metabase leaves the login page.
+    if not metabase_is_logged_in(page):
+        print(f"[Metabase] API login didn't work ({reason or 'no session'}) — trying the login form...")
+        page.goto(f"{METABASE_BASE_URL}/auth/login", wait_until="networkidle")
+        page.get_by_placeholder("nicetoseeyou@email.com").fill(METABASE_USERNAME)
+        page.get_by_placeholder("Shhh...").fill(METABASE_PASSWORD)
+        page.get_by_role("button", name="Sign in").click()
+        try:
+            page.wait_for_url(lambda u: "/auth/login" not in u, timeout=30000)
+        except PWTimeout:
+            pass
 
-
-def metabase_session_is_valid(page) -> bool:
-    page.goto(METABASE_BASE_URL, wait_until="networkidle")
-    return "/auth/login" not in page.url
+    if not metabase_is_logged_in(page):
+        raise RuntimeError(
+            "login failed — check the [metabase] username/password in config.ini"
+            + (f" (Metabase said: {reason})" if reason else "")
+        )
+    print("[Metabase] Login successful.")
 
 
 def metabase_capture(page, out_dir: Path, name: str, url: str, click_visualize: bool = False):
@@ -641,11 +670,14 @@ def run_metabase_captures(browser, out_dir: Path):
 
     page = context.new_page()
 
-    if not metabase_session_is_valid(page):
+    if not metabase_is_logged_in(page):
         print("[Metabase] Session missing or expired — logging in...")
-        metabase_do_login(page)
-        if "/auth/login" not in page.url:
-            context.storage_state(path=METABASE_SESSION_FILE)
+        try:
+            metabase_do_login(page)
+        except Exception:
+            context.close()
+            raise
+        context.storage_state(path=METABASE_SESSION_FILE)
 
     errors = []
     for name, url in METABASE_URLS.items():
