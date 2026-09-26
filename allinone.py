@@ -617,7 +617,14 @@ def metabase_capture(page, out_dir: Path, name: str, url: str, click_visualize: 
 
     if click_visualize:
         print("[Metabase] Clicking Visualize...")
-        page.get_by_role("button", name="Visualize").click()
+        try:
+            page.get_by_role("button", name="Visualize").click(timeout=15000)
+        except PWTimeout:
+            # Some PCs/sessions never show the notebook's Visualize button —
+            # the question's own page renders the same chart directly.
+            chart_url = url.removesuffix("/notebook")
+            print(f"[Metabase] No Visualize button — opening {chart_url} instead...")
+            page.goto(chart_url, wait_until="networkidle")
         page.wait_for_load_state("networkidle")
         time.sleep(3)
 
@@ -640,17 +647,24 @@ def run_metabase_captures(browser, out_dir: Path):
         if "/auth/login" not in page.url:
             context.storage_state(path=METABASE_SESSION_FILE)
 
+    errors = []
     for name, url in METABASE_URLS.items():
-        metabase_capture(page, out_dir, name, url, click_visualize=(name == "question_17017_notebook.png"))
+        try:
+            metabase_capture(page, out_dir, name, url, click_visualize=(name == "question_17017_notebook.png"))
+        except Exception as e:
+            print(f"[Metabase] FAILED to capture {name}: {e}")
+            errors.append(f"Metabase: {name} was not captured")
 
     context.close()
+    return errors
 
 
 # ---------------------------------------------------------------------------
 # Step 4: Email
 # ---------------------------------------------------------------------------
 
-def send_report_email(out_dir: Path, report_path: Path, check_date: str = None, examiner: str = None):
+def send_report_email(out_dir: Path, report_path: Path, check_date: str = None, examiner: str = None,
+                      errors: list = None):
     images = sorted(out_dir.glob("*.png"))
     all_files = images + ([report_path] if report_path and report_path.exists() else [])
 
@@ -688,6 +702,11 @@ def send_report_email(out_dir: Path, report_path: Path, check_date: str = None, 
             f"PC: {html.escape(pc_name)} &nbsp; Windows user: {html.escape(win_user)}<br>"
             f"Sent: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>"
             f"<p>Files: {html.escape(', '.join(p.name for p in all_files))}</p>"
+            + (
+                "<p><b>Problems during this run (check manually):</b><br>"
+                + "<br>".join(html.escape(e) for e in errors) + "</p>"
+                if errors else ""
+            )
         ),
         "attachment": attachments,
     }
@@ -714,6 +733,10 @@ def send_report_email(out_dir: Path, report_path: Path, check_date: str = None, 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+def first_line(e: Exception) -> str:
+    return (str(e).strip().splitlines() or [type(e).__name__])[0]
+
 
 def check_config():
     """Stop early with a clear message if the shared logins are missing."""
@@ -753,14 +776,25 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)  # switch to True for unattended runs
 
-        run_cnom_captures(browser, out_dir)
-        run_metabase_captures(browser, out_dir)
+        # A failure in one system shouldn't stop the other or the email —
+        # whatever was captured is still sent, with the problem listed.
+        errors = []
+        try:
+            run_cnom_captures(browser, out_dir)
+        except Exception as e:
+            print(f"[CNOM] FAILED: {e}")
+            errors.append(f"CNOM stopped early: {first_line(e)}")
+        try:
+            errors += run_metabase_captures(browser, out_dir)
+        except Exception as e:
+            print(f"[Metabase] FAILED: {e}")
+            errors.append(f"Metabase stopped early: {first_line(e)}")
 
         browser.close()
 
     print(f"\nDone. Files saved in {out_dir}/")
 
-    send_report_email(out_dir, report_path, report["date"], report["name"])
+    send_report_email(out_dir, report_path, report["date"], report["name"], errors)
 
 
 if __name__ == "__main__":
