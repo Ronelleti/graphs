@@ -54,6 +54,22 @@ from = verified_sender@company.com
 to = receiver@company.com
 ```
 
+### Graphs inside the email body (optional)
+
+Brevo's HTTP API can only send the graphs as attachments. To show them in
+the email body instead, add Brevo's SMTP login to `[email]`:
+
+```ini
+smtp_login = xxxxxx@smtp-brevo.com
+smtp_key = your_smtp_key
+```
+
+Both values are on Brevo's **SMTP & API → SMTP** tab (the SMTP key is
+different from the API key). The email then goes through
+`smtp-relay.brevo.com` on port 587. If that port is blocked or the login
+fails, the program falls back to the API and sends the graphs as
+attachments, as before. Set `smtp_port = 2525` if only 587 is blocked.
+
 If a value is left empty, the matching environment variable (`CNOM_USERNAME`,
 `EMAIL_TO`, ...) is used instead, so older setups keep working.
 

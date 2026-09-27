@@ -29,12 +29,15 @@ import sys
 import time
 import base64
 import html
+import smtplib
 import argparse
 import configparser
 import subprocess
 import tkinter as tk
 from tkinter import messagebox
 from datetime import datetime
+from email.message import EmailMessage
+from email.utils import formataddr, make_msgid
 from pathlib import Path
 
 # Folder of the exe (or of this script) — holds config.ini, the template and
@@ -136,6 +139,13 @@ METABASE_PASSWORD = setting("metabase", "password", "METABASE_PASSWORD")
 BREVO_API_KEY = setting("email", "brevo_api_key", "BREVO_API_KEY")
 EMAIL_FROM = setting("email", "from", "EMAIL_FROM")
 EMAIL_TO = setting("email", "to", "EMAIL_TO")
+
+# Optional Brevo SMTP login (Brevo → SMTP & API → SMTP). When set, the graphs
+# are shown inside the email body — Brevo's HTTP API can only attach them.
+SMTP_LOGIN = setting("email", "smtp_login", "BREVO_SMTP_LOGIN")
+SMTP_KEY = setting("email", "smtp_key", "BREVO_SMTP_KEY")
+SMTP_HOST = "smtp-relay.brevo.com"
+SMTP_PORT = int(setting("email", "smtp_port", "BREVO_SMTP_PORT") or 587)
 
 CNOM_LOGGED_IN_MARKER = "text=Select item"
 NODE_MONITOR_LINK = "text=Node Monitor"
@@ -695,69 +705,124 @@ def run_metabase_captures(browser, out_dir: Path):
 # Step 4: Email
 # ---------------------------------------------------------------------------
 
+def email_summary_html(all_files: list, examiner: str, errors: list) -> str:
+    pc_name = os.environ.get("COMPUTERNAME", "")
+    win_user = os.environ.get("USERNAME", "")
+    return (
+        f"<p>Examiner: {html.escape(examiner or '(not filled in)')}<br>"
+        f"PC: {html.escape(pc_name)} &nbsp; Windows user: {html.escape(win_user)}<br>"
+        f"Sent: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>"
+        + (
+            "<p style='color:#b00020'><b>Problems during this run (check manually):</b><br>"
+            + "<br>".join(html.escape(e) for e in errors) + "</p>"
+            if errors else ""
+        )
+        + f"<p>Files: {html.escape(', '.join(p.name for p in all_files))}</p>"
+    )
+
+
+def send_via_smtp(subject: str, to_addrs: list, images: list, report_path: Path, summary_html: str):
+    """Graphs inline in the body (cid: images), shift report attached."""
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = formataddr(("Shift Report Automation", EMAIL_FROM))
+    msg["To"] = ", ".join(to_addrs)
+    msg.set_content("Automated shift report. Open this email in HTML view to see the graphs.")
+
+    cids = {img: make_msgid(domain="dailychecks.local") for img in images}
+    graphs_html = "".join(
+        f"<h3 style='font-family:Segoe UI,Arial,sans-serif;margin:24px 0 6px'>{html.escape(img.stem)}</h3>"
+        f"<img src='cid:{cid[1:-1]}' alt='{html.escape(img.name)}' width='1000' "
+        f"style='width:100%;max-width:1000px;height:auto;border:1px solid #ddd'>"
+        for img, cid in cids.items()
+    )
+    msg.add_alternative(
+        "<div style='font-family:Segoe UI,Arial,sans-serif'>"
+        "<p>Automated shift report.</p>" + summary_html + graphs_html + "</div>",
+        subtype="html",
+    )
+    html_part = msg.get_payload()[1]
+    for img, cid in cids.items():
+        html_part.add_related(img.read_bytes(), "image", "png", cid=cid,
+                              filename=img.name, disposition="inline")
+
+    if report_path and report_path.exists():
+        msg.add_attachment(
+            report_path.read_bytes(), maintype="application",
+            subtype="vnd.openxmlformats-officedocument.wordprocessingml.document",
+            filename=report_path.name,
+        )
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=60) as smtp:
+        smtp.starttls()
+        smtp.login(SMTP_LOGIN, SMTP_KEY)
+        smtp.send_message(msg)
+
+
+def send_via_api(subject: str, to_addrs: list, all_files: list, summary_html: str):
+    """Brevo HTTP API — everything as attachments (no inline image support)."""
+    payload = {
+        "sender": {"name": "Shift Report Automation", "email": EMAIL_FROM},
+        "to": [{"email": addr} for addr in to_addrs],
+        "subject": subject,
+        "htmlContent": "<p>Automated shift report attached.</p>" + summary_html,
+        "attachment": [
+            {"content": base64.b64encode(path.read_bytes()).decode(), "name": path.name}
+            for path in all_files
+        ],
+    }
+    response = requests.post(
+        "https://api.brevo.com/v3/smtp/email",
+        headers={
+            "api-key": BREVO_API_KEY,
+            "Content-Type": "application/json",
+            "accept": "application/json",
+        },
+        json=payload,
+        timeout=60,
+    )
+    if response.status_code not in (200, 201):
+        raise RuntimeError(f"{response.status_code} {response.text}")
+
+
 def send_report_email(out_dir: Path, report_path: Path, check_date: str = None, examiner: str = None,
                       errors: list = None):
-    images = sorted(out_dir.glob("*.png"))
+    images = sorted(out_dir.glob("*.png"), key=lambda f: f.stat().st_mtime)  # capture order
     all_files = images + ([report_path] if report_path and report_path.exists() else [])
 
     if not all_files:
         print("No files found to email.")
         return
-    if not BREVO_API_KEY or not EMAIL_FROM or not EMAIL_TO:
+    use_smtp = bool(SMTP_LOGIN and SMTP_KEY)
+    if not EMAIL_FROM or not EMAIL_TO or not (use_smtp or BREVO_API_KEY):
         print(f"Brevo key / sender / receiver missing in {CONFIG_PATH} — skipping email (files are still saved).")
         return
 
-    print(f"Emailing {len(all_files)} file(s) via Brevo to {EMAIL_TO}...")
+    to_addrs = [addr.strip() for addr in EMAIL_TO.split(",") if addr.strip()]
 
-    to_list = [{"email": addr.strip()} for addr in EMAIL_TO.split(",") if addr.strip()]
-
-    attachments = []
-    for path in all_files:
-        content = base64.b64encode(path.read_bytes()).decode()
-        attachments.append({"content": content, "name": path.name})
-
-    # Everyone sends from the same sender to the same receiver, so the
-    # subject/body say who ran it and from which PC.
+    # Everyone sends from the same sender, so the subject/body say who ran it
+    # and from which PC.
     subject = f"Shift Report — {check_date or datetime.now().strftime('%d.%m.%y')}"
     if examiner:
         subject += f" — {examiner}"
-    pc_name = os.environ.get("COMPUTERNAME", "")
-    win_user = os.environ.get("USERNAME", "")
+    summary_html = email_summary_html(all_files, examiner, errors)
 
-    payload = {
-        "sender": {"name": "Shift Report Automation", "email": EMAIL_FROM},
-        "to": to_list,
-        "subject": subject,
-        "htmlContent": (
-            "<p>Automated shift report attached.</p>"
-            f"<p>Examiner: {html.escape(examiner or '(not filled in)')}<br>"
-            f"PC: {html.escape(pc_name)} &nbsp; Windows user: {html.escape(win_user)}<br>"
-            f"Sent: {datetime.now().strftime('%Y-%m-%d %H:%M')}</p>"
-            f"<p>Files: {html.escape(', '.join(p.name for p in all_files))}</p>"
-            + (
-                "<p><b>Problems during this run (check manually):</b><br>"
-                + "<br>".join(html.escape(e) for e in errors) + "</p>"
-                if errors else ""
-            )
-        ),
-        "attachment": attachments,
-    }
+    if use_smtp:
+        print(f"Emailing {len(images)} graph(s) in the email body via Brevo SMTP to {EMAIL_TO}...")
+        try:
+            send_via_smtp(subject, to_addrs, images, report_path, summary_html)
+            print("Email sent via Brevo SMTP.")
+            return
+        except Exception as e:
+            print(f"SMTP send failed ({first_line(e)}) — falling back to the Brevo API (attachments)...")
+            if not BREVO_API_KEY:
+                print("No brevo_api_key to fall back to — email not sent (files are still saved).")
+                return
 
+    print(f"Emailing {len(all_files)} file(s) via Brevo API to {EMAIL_TO}...")
     try:
-        response = requests.post(
-            "https://api.brevo.com/v3/smtp/email",
-            headers={
-                "api-key": BREVO_API_KEY,
-                "Content-Type": "application/json",
-                "accept": "application/json",
-            },
-            json=payload,
-            timeout=60,
-        )
-        if response.status_code in (200, 201):
-            print("Email sent via Brevo.")
-        else:
-            print(f"Email failed: {response.status_code} {response.text}")
+        send_via_api(subject, to_addrs, all_files, summary_html)
+        print("Email sent via Brevo.")
     except Exception as e:
         print(f"Email failed: {e}")
 
