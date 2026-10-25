@@ -42,7 +42,8 @@ from pathlib import Path
 
 # Folder of the exe (or of this script) — holds config.ini, the template and
 # optionally ms-playwright\, regardless of which folder it was launched from.
-if getattr(sys, "frozen", False):
+FROZEN = getattr(sys, "frozen", False)  # running as allinone.exe (PyInstaller)
+if FROZEN:
     APP_DIR = Path(sys.executable).resolve().parent
 else:
     APP_DIR = Path(__file__).resolve().parent
@@ -53,14 +54,33 @@ if (APP_DIR / "ms-playwright").is_dir() and not os.environ.get("PLAYWRIGHT_BROWS
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(APP_DIR / "ms-playwright")
 
 
+def fatal(title: str, msg: str):
+    print(f"ERROR: {msg}")
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror(title, msg)
+        root.destroy()
+    except Exception:
+        pass
+    sys.exit(1)
+
+
 def ensure_package(pip_name: str, import_name: str = None):
-    """Check that a package is importable; if not, pip-install it. Only
-    useful when running as a raw Python script — once packaged as an exe,
-    all packages are already bundled and this becomes a no-op."""
+    """Check that a package is importable; if not, pip-install it — only
+    when running as a raw Python script. Inside the exe, sys.executable is
+    the exe itself, so "pip install" would just relaunch the program in an
+    endless loop; a missing package there means the exe was built badly."""
     import_name = import_name or pip_name
     try:
         __import__(import_name)
     except ImportError:
+        if FROZEN:
+            fatal("Daily Checks — broken build",
+                  f"This allinone.exe was built without the '{pip_name}' package.\n\n"
+                  "On the PC that builds it, run:\n"
+                  "  pip install playwright pillow requests python-docx\n"
+                  "then build again with:  pyinstaller allinone.spec")
         print(f"Installing missing package: {pip_name}...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
 
@@ -85,6 +105,10 @@ def ensure_chromium():
             browser.close()
     except Exception as e:
         if "executable doesn't exist" in str(e).lower() or "playwright install" in str(e).lower():
+            if FROZEN:  # same relaunch loop as in ensure_package
+                fatal("Daily Checks — Chromium missing",
+                      f"Chromium was not found.\n\nCopy the ms-playwright folder into\n{APP_DIR}\n"
+                      "(next to allinone.exe) and run it again.")
             print("Chromium browser not found — installing (this can take a minute)...")
             subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
         else:

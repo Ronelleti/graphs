@@ -146,9 +146,14 @@ near the bottom of the script.
 ## Building it as a standalone .exe
 
 ```powershell
-pip install pyinstaller
-pyinstaller --onefile allinone.py
+pip install pyinstaller playwright pillow requests python-docx
+pyinstaller allinone.spec
 ```
+
+PyInstaller only bundles packages that are installed on the PC that builds
+the exe, so install all of them **before** building. If one was missing, the
+exe stops with a "broken build" message naming the package. Rebuild after
+installing it. A correct build is about 63 MB.
 
 (No `--windowed` flag this time — we want the console window to stay visible
 so you can see the automation's progress, in addition to the popup.)
