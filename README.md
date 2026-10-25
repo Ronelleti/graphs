@@ -1,7 +1,7 @@
 # All-In-One Shift Report Automation
 
 One program that does everything: asks for the shift date/name, captures 11
-CNOM screenshots, captures 2 Metabase screenshots, and emails all 14 files
+CNOM screenshots, captures 3 Metabase screenshots, and emails all 15 files
 together in one message.
 
 ## What it does, in order
@@ -12,8 +12,11 @@ together in one message.
 2. Logs into CNOM and captures the same 11 files as before: Node Monitor,
    RegisteredUsers, AbnormalBGFTerminations (HF/RH), ActiveBGFCalls (HF/RH),
    AKARegUsers, and the 4 SGW/PGW EPG graphs.
-3. Logs into Metabase and captures the dashboard and the question's chart.
-4. Sends one email via Brevo with everything attached (up to 14 files).
+3. Logs into Metabase and captures dashboard 1288 and the charts of
+   questions 17017 and 17561 (daily disconnections). If a question's
+   results are still loading after 45 seconds, the page is refreshed (up
+   to 3 tries); if they never load, the email says so.
+4. Sends one email via Brevo with everything attached (up to 15 files).
 
 ## Requirements
 

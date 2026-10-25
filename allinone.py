@@ -4,8 +4,8 @@ All-in-one shift report automation.
   1. Pops up a small window asking for the check date and examiner name,
      and saves a filled-in copy of the shift report.
   2. Logs into CNOM and captures 11 status screenshots.
-  3. Logs into Metabase and captures a dashboard + a question's chart.
-  4. Emails all of it together (14 attachments: 11 CNOM PNGs + 2 Metabase
+  3. Logs into Metabase and captures a dashboard + two questions' charts.
+  4. Emails all of it together (15 files: 11 CNOM PNGs + 3 Metabase
      PNGs + the shift report .docx) via Brevo.
 
 Settings (shared CNOM/Metabase logins, Brevo key, sender, receiver) are read
@@ -125,7 +125,15 @@ METABASE_SESSION_FILE = str(USER_DIR / "metabase_session.json")
 METABASE_URLS = {
     "dashboard_1288.png": f"{METABASE_BASE_URL}/dashboard/1288",
     "question_17017_notebook.png": f"{METABASE_BASE_URL}/question/17017/notebook",
+    "question_17561_disconnections.png": f"{METABASE_BASE_URL}/question/17561",
 }
+
+# A question's results are shown when its footer says "Showing 24 rows" /
+# "Showing first 2,000 rows". Sometimes Metabase keeps "thinking" forever
+# until the page is refreshed, so we wait for this and reload if needed.
+METABASE_RESULT_MARKER = re.compile(r"Showing (first )?[\d,]+ rows?")
+METABASE_RESULT_WAIT_MS = 45000
+METABASE_RESULT_ATTEMPTS = 3
 
 OUTPUT_ROOT = USER_DIR / "screenshots"
 REPORTS_DIR = USER_DIR / "reports"
@@ -667,9 +675,34 @@ def metabase_capture(page, out_dir: Path, name: str, url: str, click_visualize: 
         page.wait_for_load_state("networkidle")
         time.sleep(3)
 
+    warning = None
+    if "/question/" in page.url:
+        warning = metabase_wait_for_results(page, url.removesuffix("/notebook"))
+        if warning:
+            warning = f"Metabase: {name} — {warning}"
+
     out_path = out_dir / name
     page.screenshot(path=str(out_path), full_page=True)
     print(f" -> saved {name}")
+    return warning
+
+
+def metabase_wait_for_results(page, chart_url: str):
+    """Wait until the question shows its results; reload when it's stuck
+    loading. Returns a warning if it never finished, else None."""
+    for attempt in range(1, METABASE_RESULT_ATTEMPTS + 1):
+        try:
+            page.get_by_text(METABASE_RESULT_MARKER).first.wait_for(timeout=METABASE_RESULT_WAIT_MS)
+            time.sleep(2)  # let the chart finish drawing
+            return None
+        except PWTimeout:
+            if attempt == METABASE_RESULT_ATTEMPTS:
+                break
+            print(f"[Metabase] Still loading after {METABASE_RESULT_WAIT_MS // 1000}s — "
+                  f"refreshing (attempt {attempt + 1}/{METABASE_RESULT_ATTEMPTS})...")
+            page.goto(chart_url, wait_until="networkidle")
+    print("[Metabase] WARNING: results still not shown — saving the screenshot anyway.")
+    return "results did not finish loading (screenshot may be empty)"
 
 
 def run_metabase_captures(browser, out_dir: Path):
@@ -692,7 +725,10 @@ def run_metabase_captures(browser, out_dir: Path):
     errors = []
     for name, url in METABASE_URLS.items():
         try:
-            metabase_capture(page, out_dir, name, url, click_visualize=(name == "question_17017_notebook.png"))
+            warning = metabase_capture(page, out_dir, name, url,
+                                       click_visualize=(name == "question_17017_notebook.png"))
+            if warning:
+                errors.append(warning)
         except Exception as e:
             print(f"[Metabase] FAILED to capture {name}: {e}")
             errors.append(f"Metabase: {name} was not captured")
