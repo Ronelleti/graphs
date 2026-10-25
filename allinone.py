@@ -681,9 +681,23 @@ def metabase_do_login(page):
     print("[Metabase] Login successful.")
 
 
+def metabase_settle(page):
+    """Give the page a chance to go quiet. A question that keeps "thinking"
+    never does — that's handled by metabase_wait_for_results, not an error."""
+    try:
+        page.wait_for_load_state("networkidle", timeout=20000)
+    except PWTimeout:
+        pass
+
+
+def metabase_goto(page, url: str):
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    metabase_settle(page)
+
+
 def metabase_capture(page, out_dir: Path, name: str, url: str, click_visualize: bool = False):
     print(f"[Metabase] Opening {url}")
-    page.goto(url, wait_until="networkidle")
+    metabase_goto(page, url)
     time.sleep(3)
 
     if click_visualize:
@@ -695,8 +709,8 @@ def metabase_capture(page, out_dir: Path, name: str, url: str, click_visualize: 
             # the question's own page renders the same chart directly.
             chart_url = url.removesuffix("/notebook")
             print(f"[Metabase] No Visualize button — opening {chart_url} instead...")
-            page.goto(chart_url, wait_until="networkidle")
-        page.wait_for_load_state("networkidle")
+            metabase_goto(page, chart_url)
+        metabase_settle(page)
         time.sleep(3)
 
     warning = None
@@ -724,7 +738,7 @@ def metabase_wait_for_results(page, chart_url: str):
                 break
             print(f"[Metabase] Still loading after {METABASE_RESULT_WAIT_MS // 1000}s — "
                   f"refreshing (attempt {attempt + 1}/{METABASE_RESULT_ATTEMPTS})...")
-            page.goto(chart_url, wait_until="networkidle")
+            metabase_goto(page, chart_url)
     print("[Metabase] WARNING: results still not shown — saving the screenshot anyway.")
     return "results did not finish loading (screenshot may be empty)"
 
@@ -755,7 +769,7 @@ def run_metabase_captures(browser, out_dir: Path):
                 errors.append(warning)
         except Exception as e:
             print(f"[Metabase] FAILED to capture {name}: {e}")
-            errors.append(f"Metabase: {name} was not captured")
+            errors.append(f"Metabase: {name} was not captured ({first_line(e)})")
 
     context.close()
     return errors
