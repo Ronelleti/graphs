@@ -12,8 +12,8 @@ together in one message.
 2. Logs into CNOM and captures the same 11 files as before: Node Monitor,
    RegisteredUsers, AbnormalBGFTerminations (HF/RH), ActiveBGFCalls (HF/RH),
    AKARegUsers, and the 4 SGW/PGW EPG graphs.
-3. Logs into Metabase and captures dashboard 1288 and the charts of
-   questions 17017 and 17561 (daily disconnections). If a question's
+3. Logs into Metabase and captures questions 17633 (VoLTE file
+   monitoring by site), 17017 and 17561 (daily disconnections). If a question's
    results are still loading after 45 seconds, the page is refreshed (up
    to 3 tries); if they never load, the email says so.
 4. Sends one email via Brevo with everything attached (up to 15 files).

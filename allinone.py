@@ -4,7 +4,7 @@ All-in-one shift report automation.
   1. Pops up a small window asking for the check date and examiner name,
      and saves a filled-in copy of the shift report.
   2. Logs into CNOM and captures 11 status screenshots.
-  3. Logs into Metabase and captures a dashboard + two questions' charts.
+  3. Logs into Metabase and captures three questions (17633, 17017, 17561).
   4. Emails all of it together (15 files: 11 CNOM PNGs + 3 Metabase
      PNGs + the shift report .docx) via Brevo.
 
@@ -147,7 +147,7 @@ CNOM_SESSION_FILE = str(USER_DIR / "session.json")
 METABASE_BASE_URL = "http://10.11.2.32:3000"
 METABASE_SESSION_FILE = str(USER_DIR / "metabase_session.json")
 METABASE_URLS = {
-    "dashboard_1288.png": f"{METABASE_BASE_URL}/dashboard/1288",
+    "question_17633_volte_by_site.png": f"{METABASE_BASE_URL}/question/17633",
     "question_17017_notebook.png": f"{METABASE_BASE_URL}/question/17017/notebook",
     "question_17561_disconnections.png": f"{METABASE_BASE_URL}/question/17561",
 }
